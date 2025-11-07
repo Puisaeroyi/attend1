@@ -51,8 +51,17 @@ class AttendanceProcessor:
         print(f"✅ Processing complete!")
 
     def _load_excel(self, path: str) -> pd.DataFrame:
-        """Load input Excel, parse datetime, validate columns"""
-        df = pd.read_excel(path, engine='openpyxl')
+        """Load input Excel, parse datetime, validate columns (optimized)"""
+        # OPTIMIZATION: Try xlrd first (faster for .xls), fall back to openpyxl
+        try:
+            df = pd.read_excel(path, engine='xlrd')
+        except:
+            try:
+                # For .xlsx: use openpyxl with data_only to skip formulas
+                df = pd.read_excel(path, engine='openpyxl', data_only=True)
+            except:
+                # Final fallback to default engine
+                df = pd.read_excel(path)
 
         # Validate required columns
         required_cols = ['ID', 'Name', 'Date', 'Time', 'Status']
@@ -60,11 +69,11 @@ class AttendanceProcessor:
         if missing:
             raise ValueError(f"Missing required columns: {', '.join(missing)}")
 
-        # Combine Date + Time -> timestamp
-        # Handle various date/time formats
-        df['timestamp'] = pd.to_datetime(
-            df['Date'].astype(str) + ' ' + df['Time'].astype(str),
-            errors='coerce'
+        # OPTIMIZATION: Use fast datetime parsing with format hint
+        from performance import parse_datetime_optimized
+        df['timestamp'] = df.apply(
+            lambda row: parse_datetime_optimized(str(row['Date']), str(row['Time'])),
+            axis=1
         )
 
         # Remove rows with invalid timestamps
@@ -73,8 +82,8 @@ class AttendanceProcessor:
             print(f"   ⚠ Skipped {invalid_count} rows with invalid timestamps")
             df = df[df['timestamp'].notna()].copy()
 
-        # Sort by Name and timestamp for consistent processing
-        df = df.sort_values(['Name', 'timestamp']).reset_index(drop=True)
+        # OPTIMIZATION: Sort once with composite key
+        df = df.sort_values(['Name', 'timestamp'], na_position='last').reset_index(drop=True)
 
         return df
 
@@ -114,21 +123,21 @@ class AttendanceProcessor:
     def _detect_bursts(self, df: pd.DataFrame) -> pd.DataFrame:
         """Group swipes ≤2min apart, keep earliest start + latest end
 
-        Uses compare-diff-cumsum pattern for efficient burst detection.
+        Uses compare-diff-cumsum pattern for efficient burst detection (optimized).
         """
         threshold = pd.Timedelta(minutes=self.config.burst_threshold_minutes)
 
-        # Calculate time diff between consecutive swipes per user
-        df['time_diff'] = df.groupby('Name')['timestamp'].diff()
+        # OPTIMIZATION: Use sort=False to avoid re-sorting (already sorted)
+        df['time_diff'] = df.groupby('Name', sort=False)['timestamp'].diff()
 
         # Mark burst boundaries (diff > threshold OR first row)
         df['new_burst'] = (df['time_diff'] > threshold) | df['time_diff'].isna()
 
         # Create burst group IDs
-        df['burst_id'] = df.groupby('Name')['new_burst'].cumsum()
+        df['burst_id'] = df.groupby('Name', sort=False)['new_burst'].cumsum()
 
         # For each burst: keep earliest timestamp as start, latest as end
-        burst_groups = df.groupby(['Name', 'burst_id']).agg({
+        burst_groups = df.groupby(['Name', 'burst_id'], sort=False).agg({
             'timestamp': ['min', 'max'],
             'output_name': 'first',
             'output_id': 'first'
