@@ -18,12 +18,12 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 try:
     from config import RuleConfig
     from processor import AttendanceProcessor
-    from gui.utils import TextRedirector
+    from gui.utils import QueuedTextRedirector
 except ImportError:
     # Fallback if modules not available
     RuleConfig = None
     AttendanceProcessor = None
-    TextRedirector = None
+    QueuedTextRedirector = None
 
 
 class AttendanceProcessorTab(ttk.Frame):
@@ -35,6 +35,7 @@ class AttendanceProcessorTab(ttk.Frame):
         self.output_path = tk.StringVar()
         self.config_path = tk.StringVar(value="rule.yaml")
         self.is_processing = False
+        self.redirector = None  # Will be initialized during processing
         self.create_widgets()
 
     def create_widgets(self):
@@ -205,7 +206,7 @@ class AttendanceProcessorTab(ttk.Frame):
             return
 
         # Check if required modules are available
-        if not all([RuleConfig, AttendanceProcessor, TextRedirector]):
+        if not all([RuleConfig, AttendanceProcessor, QueuedTextRedirector]):
             error_msg = "Required modules not available. Please ensure processor.py and config.py are in the correct location."
             messagebox.showerror("Module Error", error_msg)
             return
@@ -234,12 +235,14 @@ class AttendanceProcessorTab(ttk.Frame):
             config_path: Path to config YAML file
         """
         original_stdout = sys.stdout
+        original_stderr = sys.stderr
 
         try:
-            # Redirect stdout to GUI log widget
-            if TextRedirector:
-                sys.stdout = TextRedirector(self.log_text)
-                sys.stderr = TextRedirector(self.log_text)
+            # Redirect stdout to GUI log widget using queued redirector
+            if QueuedTextRedirector:
+                self.redirector = QueuedTextRedirector(self.log_text, self)
+                sys.stdout = self.redirector
+                sys.stderr = self.redirector
 
             # Load configuration
             print(f"🔧 Loading configuration: {config_path}")
@@ -291,9 +294,13 @@ class AttendanceProcessorTab(ttk.Frame):
             self.after(0, self._show_error, error_msg)
 
         finally:
-            # Restore stdout and re-enable button in main thread
+            # Stop redirector polling and restore stdout/stderr
+            if self.redirector:
+                self.redirector.stop()
+                self.redirector = None
+
             sys.stdout = original_stdout
-            sys.stderr = original_stdout
+            sys.stderr = original_stderr
             self.after(0, self._reset_button)
 
     def _show_success(self, output_path):

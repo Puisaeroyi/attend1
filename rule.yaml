@@ -1,15 +1,17 @@
 # Attendance Cleaning Rules for 4 CCTV Operators
-# Version 9.0 - Complete ruleset with shift-instance grouping and intelligent break detection
+# Version 10.0 - Complete ruleset with strict grace period enforcement
 # Key Features:
+#   - Grace period as hard cutoff for late marking
 #   - Shift-instance grouping (no split night shifts)
 #   - Gap-based break detection with midpoint fallback
 #   - Burst detection for multiple rapid swipes
-#   - Strict time window enforcement
+#   - Strict late detection for check-in and break returns
 
 system_overview: |
   Process biometric swipe logs for 4 CCTV operators in 3-shift rotation.
-  Complete flow: Check-in → Work → Break Out → Break Period → Break In → Resume Work → Check-out
+  Complete flow: Check-in → Work → Break Time Out → Break Period → Break Time In → Resume Work → Check Out Record
   One shift = One complete record (even if crossing midnight)
+  Grace period = Hard cutoff for on-time status (not just a buffer)
 
 dataset_requirements:
   input_logs:
@@ -52,22 +54,22 @@ grouping_logic:
   primary_grouping: "shift_instance"
   
   shift_instance_definition:
-    - "A shift instance begins with a valid First In swipe"
+    - "A shift instance begins with a valid Check-in swipe"
     - "Includes all activities until shift window ends"
     - "Night shifts maintain single record despite crossing midnight"
     - "Date column shows shift START date, not individual swipe dates"
   
   shift_boundaries:
     A_shift:  # Morning: 06:00-14:00
-      shift_date: "Calendar date of First In"
+      shift_date: "Calendar date of Check-in"
       activity_window: "05:30 on shift_date THROUGH 14:35 on shift_date"
       
     B_shift:  # Afternoon: 14:00-22:00
-      shift_date: "Calendar date of First In"
+      shift_date: "Calendar date of Check-in"
       activity_window: "13:30 on shift_date THROUGH 22:35 on shift_date"
       
     C_shift:  # Night: 22:00-06:00 (CROSSES MIDNIGHT)
-      shift_date: "Calendar date of First In"
+      shift_date: "Calendar date of Check-in"
       activity_window: "21:30 on shift_date THROUGH 06:35 on (shift_date + 1)"
       special_handling: "All next-day swipes before 06:35 belong to previous day's shift"
 
@@ -89,104 +91,159 @@ shift_structure:
     A:
       name: "Morning"
       window: "06:00-14:00"
-      check_in_search_range: "05:30-06:35"
-      check_out_search_range: "13:30-14:35"
-      grace_period_minutes: 5
-      
+      check_in:
+        search_range: "05:30-06:35"      # Where to look for swipes
+        shift_start: "06:00:00"
+        on_time_cutoff: "06:04:59"       # Last second to be on-time
+        late_threshold: "06:05:00"        # This and after = LATE
+      check_out:
+        search_range: "13:30-14:35"
+        
     B:
       name: "Afternoon"  
       window: "14:00-22:00"
-      check_in_search_range: "13:30-14:35"
-      check_out_search_range: "21:30-22:35"
-      grace_period_minutes: 5
-      
+      check_in:
+        search_range: "13:30-14:35"
+        shift_start: "14:00:00"
+        on_time_cutoff: "14:04:59"
+        late_threshold: "14:05:00"
+      check_out:
+        search_range: "21:30-22:35"
+        
     C:
       name: "Night"
       window: "22:00-06:00"
-      check_in_search_range: "21:30-22:35"
-      check_out_search_range: "05:30-06:35"  # Next calendar day
-      grace_period_minutes: 5
+      check_in:
+        search_range: "21:30-22:35"
+        shift_start: "22:00:00"
+        on_time_cutoff: "22:04:59"
+        late_threshold: "22:05:00"
+      check_out:
+        search_range: "05:30-06:35"      # Next calendar day
   
-  detection_rules:
-    shift_identification: "Based on First In location within search ranges"
-    late_marking: "First In > (shift_start + grace_period)"
-    strict_exclusion: "Ignore all swipes outside defined ranges"
+  late_marking_rules:
+    check_in_validation:
+      on_time: "Check-in <= shift_start + 04:59"
+      late: "Check-in >= shift_start + 05:00"
+      examples:
+        - "06:04:59 = ON TIME"
+        - "06:05:00 = LATE"
+        - "06:05:40 = LATE (40 seconds late)"
+    
+    strict_exclusion: "Ignore all swipes outside defined search ranges"
 
 break_detection:
   parameters:
     A_shift:
       window: "10:00-10:30"
-      search_range: "09:50-10:35"
+      break_out:
+        search_range: "09:50-10:35"
+      break_in:
+        search_range: "09:50-10:35"
+        break_end_time: "10:30:00"
+        on_time_cutoff: "10:34:59"       # 10:30 + 04:59
+        late_threshold: "10:35:00"        # This and after = LATE FROM BREAK
       midpoint_checkpoint: "10:15"
       minimum_break_gap_minutes: 5
       
     B_shift:
       window: "18:00-18:30"
-      search_range: "17:50-18:35"
+      break_out:
+        search_range: "17:50-18:35"
+      break_in:
+        search_range: "17:50-18:35"
+        break_end_time: "18:30:00"
+        on_time_cutoff: "18:34:59"       # 18:30 + 04:59
+        late_threshold: "18:35:00"        # This and after = LATE FROM BREAK
       midpoint_checkpoint: "18:15"
       minimum_break_gap_minutes: 5
       
     C_shift:
       window: "02:00-02:45"
-      search_range: "01:50-02:45"  # On shift_date + 1 for night shift
+      break_out:
+        search_range: "01:50-02:50"      # On shift_date + 1
+      break_in:
+        search_range: "01:50-02:50"      # Extended to 02:50 for grace period
+        break_end_time: "02:45:00"
+        on_time_cutoff: "02:49:59"       # 02:45 + 04:59
+        late_threshold: "02:50:00"        # This and after = LATE FROM BREAK
       midpoint_checkpoint: "02:22:30"
       minimum_break_gap_minutes: 5
+  
+  late_marking_rules:
+    break_in_validation:
+      on_time: "Break Time In <= break_end_time + 04:59"
+      late: "Break Time In >= break_end_time + 05:00"
+      blank: "If no Break Time In detected"
   
   detection_algorithm:
     priority_1_gap_detection:
       description: "Primary method - detect actual break via time gap"
       condition: "Gap >= minimum_break_gap between any two swipes/bursts"
       action:
-        break_out: "Swipe/burst immediately before gap"
-        break_in: "Swipe/burst immediately after gap"
+        break_time_out: "Swipe/burst immediately before gap"
+        break_time_in: "Swipe/burst immediately after gap"
       
     priority_2_midpoint_logic:
       description: "Fallback method when no clear gap exists"
       
       swipes_span_midpoint:
         condition: "Some swipes before AND after midpoint"
-        break_out: "Latest before/at midpoint"
-        break_in: "Earliest after midpoint"
+        break_time_out: "Latest before/at midpoint"
+        break_time_in: "Earliest after midpoint"
       
       all_swipes_before_midpoint:
-        condition: "All swipes before midpoint with gap >= minimum"
-        break_out: "First swipe before gap"
-        break_in: "First swipe after gap"
+        condition_with_gap: "All swipes before midpoint with gap >= minimum"
+        break_time_out: "First swipe before gap"
+        break_time_in: "First swipe after gap"
         
         condition_no_gap: "All swipes before midpoint without qualifying gap"
-        break_out: "Latest swipe"
-        break_in: "Leave blank"
+        break_time_out: "Latest swipe"
+        break_time_in: "Leave blank"
       
       all_swipes_after_midpoint:
-        condition: "All swipes after midpoint with gap >= minimum"
-        break_out: "First swipe before gap"
-        break_in: "First swipe after gap"
+        condition_with_gap: "All swipes after midpoint with gap >= minimum"
+        break_time_out: "First swipe before gap"
+        break_time_in: "First swipe after gap"
         
         condition_no_gap: "All swipes after midpoint without qualifying gap"
-        break_out: "Leave blank"
-        break_in: "Latest swipe"
+        break_time_out: "Leave blank"
+        break_time_in: "Latest swipe"
     
     single_swipe_logic:
       before_midpoint:
-        break_out: "Use swipe time"
-        break_in: "Leave blank"
+        break_time_out: "Use swipe time"
+        break_time_in: "Leave blank"
       at_or_after_midpoint:
-        break_out: "Leave blank"
-        break_in: "Use swipe time"
+        break_time_out: "Leave blank"
+        break_time_in: "Use swipe time"
     
     no_swipes_in_range:
-      break_out: "Leave blank"
-      break_in: "Leave blank"
+      break_time_out: "Leave blank"
+      break_time_in: "Leave blank"
 
 output_columns:
-  - Date        # Shift start date
-  - ID          # Employee ID
-  - Name        # Full name
-  - Shift       # A/B/C or Morning/Afternoon/Night
-  - First In    # Check-in time
-  - Break Out   # Break start
-  - Break In    # Break end
-  - Last Out    # Check-out time
+  - Date                    # Shift start date
+  - ID                      # Employee ID
+  - Name                    # Full name
+  - Shift                   # A/B/C or Morning/Afternoon/Night
+  - Check-in                # First entry (formerly First In)
+  - Check-in Status         # "On Time" or "Late"
+  - Break Time Out          # Break start (formerly Break Out)
+  - Break Time In           # Break end (formerly Break In)
+  - Break Time In Status    # "On Time" or "Late" or blank
+  - Check Out Record        # Last exit (formerly Last Out)
+
+status_determination:
+  check_in_status:
+    if_blank: ""
+    if_time <= on_time_cutoff: "On Time"
+    if_time >= late_threshold: "Late"
+    
+  break_time_in_status:
+    if_blank: ""
+    if_time <= on_time_cutoff: "On Time"
+    if_time >= late_threshold: "Late"
 
 processing_sequence:
   step_1_collect_swipes:
@@ -194,13 +251,13 @@ processing_sequence:
     - "Sort chronologically across all dates"
   
   step_2_identify_shifts:
-    - "Find swipes in check_in_search_ranges"
+    - "Find swipes in check_in search ranges"
     - "Each marks a new shift instance"
-    - "Assign shift date from First In"
+    - "Assign shift date from Check-in"
   
   step_3_group_shift_activities:
     night_shift_C:
-      - "First In between 21:30-22:35 on Day N"
+      - "Check-in between 21:30-22:35 on Day N"
       - "Include all swipes until 06:35 on Day N+1"
       - "Output with Date = Day N"
     
@@ -212,19 +269,22 @@ processing_sequence:
     a_burst_grouping:
       - "Combine swipes within 2-minute windows"
     
-    b_extract_first_in:
-      - "Earliest swipe/burst_start in check_in_search_range"
+    b_extract_check_in:
+      - "Earliest swipe/burst_start in check_in search range"
+      - "Determine if late based on on_time_cutoff"
     
-    c_extract_last_out:
-      - "Latest swipe/burst_end in check_out_search_range"
+    c_extract_check_out:
+      - "Latest swipe/burst_end in check_out search range"
     
     d_detect_breaks:
       - "Apply gap-detection algorithm first"
       - "Fall back to midpoint logic if needed"
       - "Handle single swipes with checkpoint"
+      - "Determine if Break Time In is late"
     
     e_output_single_row:
       - "One complete row per shift instance"
+      - "Include status fields for late detection"
 
 validation_rules:
   - "Timestamps outside search ranges: excluded"
@@ -232,106 +292,166 @@ validation_rules:
   - "Bursts treated as atomic units"
   - "Night shift swipes on next day: attributed to previous day's shift"
   - "Empty cells for missing timestamps: allowed"
+  - "Grace period is hard cutoff, not advisory"
 
 example_scenarios:
-  scenario_1_normal_day_shift:
+  scenario_1_on_time_morning:
     input_swipes:
-      - "2025-11-04 05:55"
+      - "2025-11-04 06:04:45"    # On time check-in
+      - "2025-11-04 09:55"
+      - "2025-11-04 10:25"        # On time break return
+      - "2025-11-04 14:05"
+    output:
+      Date: "2025-11-04"
+      Shift: "A"
+      Check-in: "06:04:45"
+      Check-in_Status: "On Time"
+      Break_Time_Out: "09:55"
+      Break_Time_In: "10:25"
+      Break_Time_In_Status: "On Time"
+      Check_Out_Record: "14:05"
+  
+  scenario_2_late_check_in:
+    input_swipes:
+      - "2025-11-04 06:05:40"    # LATE (your example)
       - "2025-11-04 09:55"
       - "2025-11-04 10:25"
       - "2025-11-04 14:05"
     output:
       Date: "2025-11-04"
       Shift: "A"
-      First_In: "05:55"
-      Break_Out: "09:55"
-      Break_In: "10:25"
-      Last_Out: "14:05"
+      Check-in: "06:05:40"
+      Check-in_Status: "Late"
+      Break_Time_Out: "09:55"
+      Break_Time_In: "10:25"
+      Break_Time_In_Status: "On Time"
+      Check_Out_Record: "14:05"
   
-  scenario_2_burst_with_breaks:
+  scenario_3_late_break_return:
+    input_swipes:
+      - "2025-11-04 06:00"
+      - "2025-11-04 10:20"
+      - "2025-11-04 10:35:00"    # LATE from break
+      - "2025-11-04 14:00"
+    output:
+      Date: "2025-11-04"
+      Shift: "A"
+      Check-in: "06:00"
+      Check-in_Status: "On Time"
+      Break_Time_Out: "10:20"
+      Break_Time_In: "10:35:00"
+      Break_Time_In_Status: "Late"
+      Check_Out_Record: "14:00"
+  
+  scenario_4_both_swipes_after_midpoint:
+    input_swipes:
+      - "2025-11-04 06:00"
+      - "2025-11-04 10:20"        # After 10:15 midpoint
+      - "2025-11-04 10:29"        # After midpoint but on time
+      - "2025-11-04 14:00"
+    analysis: "9-minute gap detected, Break Time In within grace period"
+    output:
+      Date: "2025-11-04"
+      Shift: "A"
+      Check-in: "06:00"
+      Check-in_Status: "On Time"
+      Break_Time_Out: "10:20"
+      Break_Time_In: "10:29"
+      Break_Time_In_Status: "On Time"
+      Check_Out_Record: "14:00"
+  
+  scenario_5_night_shift_with_late_markers:
+    input_swipes:
+      - "2025-11-03 22:05:15"    # Late check-in
+      - "2025-11-04 02:00:35"
+      - "2025-11-04 02:50:00"    # Late break return
+      - "2025-11-04 06:03:14"
+    output:
+      Date: "2025-11-03"
+      ID: "TPL0002"
+      Name: "Pham Tan Phat"
+      Shift: "Night"
+      Check-in: "22:05:15"
+      Check-in_Status: "Late"
+      Break_Time_Out: "02:00:35"
+      Break_Time_In: "02:50:00"
+      Break_Time_In_Status: "Late"
+      Check_Out_Record: "06:03:14"
+  
+  scenario_6_burst_with_breaks:
     input_swipes:
       - "2025-11-04 05:55"
       - "2025-11-04 09:55, 09:56, 09:57, 09:58, 09:59, 10:01"  # Burst
-      - "2025-11-04 10:25"
+      - "2025-11-04 10:34:59"    # Just on time!
       - "2025-11-04 14:05"
     output:
       Date: "2025-11-04"
       Shift: "A"
-      First_In: "05:55"
-      Break_Out: "10:01"  # End of burst
-      Break_In: "10:25"
-      Last_Out: "14:05"
+      Check-in: "05:55"
+      Check-in_Status: "On Time"
+      Break_Time_Out: "10:01"     # End of burst
+      Break_Time_In: "10:34:59"
+      Break_Time_In_Status: "On Time"  # Made it by 1 second!
+      Check_Out_Record: "14:05"
   
-  scenario_3_late_break_after_midpoint:
+  scenario_7_single_swipe_before_midpoint:
     input_swipes:
-      - "2025-11-04 06:00"
-      - "2025-11-04 10:20"  # After 10:15 midpoint
-      - "2025-11-04 10:29"  # After 10:15 midpoint
-      - "2025-11-04 14:00"
-    analysis: "9-minute gap detected between 10:20 and 10:29"
-    output:
-      Date: "2025-11-04"
-      Shift: "A"
-      First_In: "06:00"
-      Break_Out: "10:20"  # Gap-based detection
-      Break_In: "10:29"   # Gap-based detection
-      Last_Out: "14:00"
-  
-  scenario_4_night_shift_crossing_midnight:
-    input_swipes:
-      - "2025-11-03 21:55:28"
-      - "2025-11-04 02:00:35"
-      - "2025-11-04 02:44:51"
-      - "2025-11-04 06:03:14"
-    output:
-      Date: "2025-11-03"  # Shift START date
-      ID: "TPL0002"
-      Name: "Pham Tan Phat"
-      Shift: "Night"
-      First_In: "21:55:28"
-      Break_Out: "02:00:35"  # Next calendar day but same shift
-      Break_In: "02:44:51"   # Next calendar day but same shift
-      Last_Out: "06:03:14"   # Next calendar day but same shift
-  
-  scenario_5_single_swipe_before_midpoint:
-    input_swipes:
-      - "2025-11-04 06:00"
-      - "2025-11-04 10:08"  # Before 10:15
+      - "2025-11-04 06:05:00"    # Exactly 1 second late
+      - "2025-11-04 10:08"       # Before 10:15
       - "2025-11-04 14:00"
     output:
       Date: "2025-11-04"
       Shift: "A"
-      First_In: "06:00"
-      Break_Out: "10:08"
-      Break_In: ""  # Blank
-      Last_Out: "14:00"
+      Check-in: "06:05:00"
+      Check-in_Status: "Late"
+      Break_Time_Out: "10:08"
+      Break_Time_In: ""          # Blank
+      Break_Time_In_Status: ""   # Blank
+      Check_Out_Record: "14:00"
   
-  scenario_6_no_break_taken:
+  scenario_8_no_break_taken:
     input_swipes:
       - "2025-11-04 06:00"
       - "2025-11-04 14:00"
     output:
       Date: "2025-11-04"
       Shift: "A"
-      First_In: "06:00"
-      Break_Out: ""  # Blank
-      Break_In: ""   # Blank
-      Last_Out: "14:00"
+      Check-in: "06:00"
+      Check-in_Status: "On Time"
+      Break_Time_Out: ""         # Blank
+      Break_Time_In: ""          # Blank
+      Break_Time_In_Status: ""   # Blank
+      Check_Out_Record: "14:00"
 
 explicitly_not_implemented:
   - "Break duration validation"
   - "Minimum break requirements"
-  - "NO_BTO/NO_BTI flags"
+  - "NO_BTO/NO_BTI flags (using blank instead)"
   - "Workday conversion (keeping 06:00 as cutoff)"
   - "Deduction calculations"
   - "Cumulative break tracking"
   - "Office staff handling"
   - "Multiple breaks per shift"
   - "Overtime calculations"
+  - "Auto-excuse for lateness"
+
+critical_timing_summary:
+  shift_A_morning:
+    check_in_deadline: "06:04:59 (06:05:00+ = Late)"
+    break_return_deadline: "10:34:59 (10:35:00+ = Late)"
+    
+  shift_B_afternoon:
+    check_in_deadline: "14:04:59 (14:05:00+ = Late)"
+    break_return_deadline: "18:34:59 (18:35:00+ = Late)"
+    
+  shift_C_night:
+    check_in_deadline: "22:04:59 (22:05:00+ = Late)"
+    break_return_deadline: "02:49:59 (02:50:00+ = Late)"
 
 system_goals: |
-  1. Accurately reflect real attendance patterns from biometric logs
+  1. Accurately reflect real attendance patterns with strict late detection
   2. Handle edge cases intelligently without manual intervention
   3. Maintain shift integrity (one shift = one complete record)
-  4. Provide clear, auditable output for payroll/compliance
+  4. Provide clear late/on-time status for compliance and payroll
   5. Eliminate data fragmentation from midnight crossings
+  6. Enforce grace period as hard cutoff, not advisory buffer

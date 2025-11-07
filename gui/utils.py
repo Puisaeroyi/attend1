@@ -2,16 +2,84 @@
 GUI Utility Functions and Classes
 
 Contains helper classes and functions for the GUI interface,
-including TextRedirector for capturing stdout/stderr.
+including optimized text redirection for performance.
 """
 
 import tkinter as tk
 import sys
+import queue
+import threading
 from pathlib import Path
 
 
+class QueuedTextRedirector:
+    """Redirect stdout/stderr to tkinter Text widget using queue for performance
+
+    This implementation uses a queue to buffer messages and batch updates,
+    preventing GUI freezing during heavy processing.
+    """
+
+    def __init__(self, text_widget, parent_widget):
+        """Initialize queued text redirector
+
+        Args:
+            text_widget: tkinter Text widget to redirect output to
+            parent_widget: Parent widget for scheduling updates
+        """
+        self.text_widget = text_widget
+        self.parent_widget = parent_widget
+        self.message_queue = queue.Queue()
+        self.is_running = True
+
+        # Start queue polling in main thread (50ms intervals)
+        self._schedule_update()
+
+    def write(self, message):
+        """Write message to queue (called from worker thread)
+
+        Args:
+            message: Message to write
+        """
+        if message.strip():  # Only queue non-empty messages
+            self.message_queue.put(message)
+
+    def flush(self):
+        """Required for file-like object interface"""
+        pass
+
+    def _schedule_update(self):
+        """Schedule next UI update using after() - runs in main thread"""
+        if self.is_running:
+            self._process_queue()
+            self.parent_widget.after(50, self._schedule_update)
+
+    def _process_queue(self):
+        """Process all queued messages and update UI - runs in main thread"""
+        messages_to_write = []
+
+        # Collect all available messages (up to 20 per batch)
+        try:
+            for _ in range(20):
+                message = self.message_queue.get_nowait()
+                messages_to_write.append(message)
+        except queue.Empty:
+            pass
+
+        # Batch update UI if we have messages
+        if messages_to_write:
+            self.text_widget.config(state='normal')
+            for msg in messages_to_write:
+                self.text_widget.insert(tk.END, msg)
+            self.text_widget.see(tk.END)
+            self.text_widget.config(state='disabled')
+
+    def stop(self):
+        """Stop queue polling"""
+        self.is_running = False
+
+
 class TextRedirector:
-    """Redirect stdout/stderr to tkinter Text widget"""
+    """Legacy redirect stdout/stderr to tkinter Text widget (kept for compatibility)"""
 
     def __init__(self, text_widget):
         """Initialize text redirector
