@@ -309,11 +309,11 @@ class AttendanceProcessor:
                 'Name': output_name,
                 'Shift': shift_cfg.display_name,
                 'Check-in': check_in_str,
-                'Check-in Status': check_in_status,
                 'Break Time Out': break_out_str,
                 'Break Time In': break_in_str,
-                'Break Time In Status': break_in_status,
-                'Check Out Record': check_out_str
+                'Check Out Record': check_out_str,
+                'Check-in Status': check_in_status,
+                'Break Time In Status': break_in_status
             })
 
         return pd.DataFrame(results)
