@@ -270,10 +270,12 @@ class AttendanceProcessor:
     def _extract_attendance_events(self, df: pd.DataFrame) -> pd.DataFrame:
         """
         For each shift instance:
-        - First In: earliest in check-in window
-        - Break Out: latest BEFORE/AT midpoint in break window (Priority 2 - midpoint logic)
-        - Break In: earliest AFTER midpoint in break window (Priority 2 - midpoint logic)
-        - Last Out: latest in check-out window
+        - Check-in: earliest in check-in window (v10.0 terminology)
+        - Check-in Status: 'On Time' or 'Late' based on grace period
+        - Break Time Out: latest BEFORE/AT midpoint in break window
+        - Break Time In: earliest AFTER midpoint in break window
+        - Break Time In Status: 'On Time' or 'Late' based on grace period
+        - Check Out Record: latest in check-out window
 
         NOTE: Groups by shift_instance_id, NOT calendar_date
         This ensures night shifts crossing midnight stay as single records
@@ -292,26 +294,36 @@ class AttendanceProcessor:
             group['time_start'] = group['burst_start'].dt.time
             group['time_end'] = group['burst_end'].dt.time
 
-            # Extract events
-            first_in = self._find_first_in(group, shift_cfg)
-            last_out = self._find_last_out(group, shift_cfg)
-            break_out, break_in = self._detect_breaks(group, shift_cfg)
+            # Extract events (returns time strings or None)
+            check_in_str, check_in_time = self._find_check_in(group, shift_cfg)
+            check_out_str = self._find_check_out(group, shift_cfg)
+            break_out_str, break_in_str, break_in_time = self._detect_breaks(group, shift_cfg)
+
+            # Determine statuses
+            check_in_status = shift_cfg.determine_check_in_status(check_in_time) if check_in_time else ""
+            break_in_status = shift_cfg.determine_break_in_status(break_in_time) if break_in_time else ""
 
             results.append({
                 'Date': shift_date,  # Shift START date, not swipe calendar date
                 'ID': output_id,
                 'Name': output_name,
                 'Shift': shift_cfg.display_name,
-                'Check In Record': first_in,
-                'Break Time Out': break_out,
-                'Break Time In': break_in,
-                'Check Out Record': last_out
+                'Check-in': check_in_str,
+                'Check-in Status': check_in_status,
+                'Break Time Out': break_out_str,
+                'Break Time In': break_in_str,
+                'Break Time In Status': break_in_status,
+                'Check Out Record': check_out_str
             })
 
         return pd.DataFrame(results)
 
-    def _find_first_in(self, group: pd.DataFrame, shift_cfg: ShiftConfig) -> str:
-        """Find earliest timestamp in check-in window (use burst_start for bursts)"""
+    def _find_check_in(self, group: pd.DataFrame, shift_cfg: ShiftConfig) -> tuple:
+        """Find earliest timestamp in check-in window (use burst_start for bursts)
+
+        Returns:
+            tuple: (time_string, time_object) for status calculation
+        """
         mask = self._time_in_range(
             group['time_start'],
             shift_cfg.check_in_start,
@@ -321,10 +333,10 @@ class AttendanceProcessor:
 
         if len(candidates) > 0:
             ts = candidates['burst_start'].min()
-            return ts.strftime('%H:%M:%S')
-        return ""
+            return ts.strftime('%H:%M:%S'), ts.time()
+        return "", None
 
-    def _find_last_out(self, group: pd.DataFrame, shift_cfg: ShiftConfig) -> str:
+    def _find_check_out(self, group: pd.DataFrame, shift_cfg: ShiftConfig) -> str:
         """Find latest timestamp in check-out window (use burst_end for bursts)"""
         mask = self._time_in_range(
             group['time_end'],
@@ -338,20 +350,23 @@ class AttendanceProcessor:
             return ts.strftime('%H:%M:%S')
         return ""
 
-    def _detect_breaks(self, group: pd.DataFrame, shift_cfg: ShiftConfig) -> Tuple[str, str]:
+    def _detect_breaks(self, group: pd.DataFrame, shift_cfg: ShiftConfig) -> Tuple[str, str, object]:
         """
-        Detect break using two-tier algorithm per rule.yaml v9.0:
+        Detect break using two-tier algorithm per rule.yaml v10.0:
 
         PRIORITY 1 - Gap Detection:
         - Find gap >= minimum_break_gap_minutes between consecutive swipes/bursts
-        - Break Out: burst/swipe immediately BEFORE gap (use burst_end)
-        - Break In: burst/swipe immediately AFTER gap (use burst_start)
+        - Break Time Out: burst/swipe immediately BEFORE gap (use burst_end)
+        - Break Time In: burst/swipe immediately AFTER gap (use burst_start)
 
         PRIORITY 2 - Midpoint Logic (fallback):
         - If no qualifying gap found, use midpoint checkpoint
-        - Break Out: latest BEFORE/AT midpoint (use burst_end)
-        - Break In: earliest AFTER midpoint (use burst_start)
+        - Break Time Out: latest BEFORE/AT midpoint (use burst_end)
+        - Break Time In: earliest AFTER midpoint (use burst_start)
         - Handle edge cases (all before, all after, single swipe)
+
+        Returns:
+            tuple: (break_out_str, break_in_str, break_in_time) for status calculation
         """
         min_gap = shift_cfg.minimum_break_gap_minutes
         midpoint = shift_cfg.midpoint
@@ -369,9 +384,9 @@ class AttendanceProcessor:
         break_swipes = group[mask].copy().sort_values('burst_start').reset_index(drop=True)
 
         if len(break_swipes) == 0:
-            return "", ""
+            return "", "", None
 
-        # PRIORITY 1: Try gap-based detection first
+        # PRIORITY 1: Try gap-based detection first (highest priority per rule.yaml)
         if len(break_swipes) >= 2:
             # Calculate gaps between consecutive swipes
             # Gap = time from end of previous burst to start of next burst
@@ -391,19 +406,21 @@ class AttendanceProcessor:
 
                 return (
                     break_out_ts.strftime('%H:%M:%S'),
-                    break_in_ts.strftime('%H:%M:%S')
+                    break_in_ts.strftime('%H:%M:%S'),
+                    break_in_ts.time()
                 )
 
-        # PRIORITY 2: Fallback to midpoint logic
-        # Split by midpoint - use time_end for Break Out, time_start for Break In
+        # PRIORITY 2: Fallback to midpoint logic when no qualifying gaps found
         before_midpoint = break_swipes[break_swipes['time_end'] <= midpoint]
         after_midpoint = break_swipes[break_swipes['time_start'] > midpoint]
 
-        # Case 1: Swipes span midpoint
+        # Case 1: Swipes span midpoint - use midpoint logic
         if len(before_midpoint) > 0 and len(after_midpoint) > 0:
-            break_out = before_midpoint['burst_end'].max().strftime('%H:%M:%S')
-            break_in = after_midpoint['burst_start'].min().strftime('%H:%M:%S')
-            return break_out, break_in
+            break_out_ts = before_midpoint['burst_end'].max()
+            break_in_ts = after_midpoint['burst_start'].min()
+            return break_out_ts.strftime('%H:%M:%S'), break_in_ts.strftime('%H:%M:%S'), break_in_ts.time()
+
+        # PRIORITY 3: Handle single-side cases with midpoint logic
 
         # Case 2: All swipes before midpoint
         if len(before_midpoint) > 0 and len(after_midpoint) == 0:
@@ -419,14 +436,16 @@ class AttendanceProcessor:
 
                 if len(gap_found) > 0:
                     idx = gap_found.index[0]
+                    break_in_ts = before_sorted.loc[idx + 1, 'burst_start']
                     return (
                         before_sorted.loc[idx, 'burst_end'].strftime('%H:%M:%S'),
-                        before_sorted.loc[idx + 1, 'burst_start'].strftime('%H:%M:%S')
+                        break_in_ts.strftime('%H:%M:%S'),
+                        break_in_ts.time()
                     )
 
             # No gap: Break Out = latest, Break In = blank
             break_out = before_midpoint['burst_end'].max().strftime('%H:%M:%S')
-            return break_out, ""
+            return break_out, "", None
 
         # Case 3: All swipes after midpoint
         if len(before_midpoint) == 0 and len(after_midpoint) > 0:
@@ -441,17 +460,19 @@ class AttendanceProcessor:
 
                 if len(gap_found) > 0:
                     idx = gap_found.index[0]
+                    break_in_ts = after_sorted.loc[idx + 1, 'burst_start']
                     return (
                         after_sorted.loc[idx, 'burst_end'].strftime('%H:%M:%S'),
-                        after_sorted.loc[idx + 1, 'burst_start'].strftime('%H:%M:%S')
+                        break_in_ts.strftime('%H:%M:%S'),
+                        break_in_ts.time()
                     )
 
             # No gap: Break Out = blank, Break In = earliest
-            break_in = after_midpoint['burst_start'].min().strftime('%H:%M:%S')
-            return "", break_in
+            break_in_ts = after_midpoint['burst_start'].min()
+            return "", break_in_ts.strftime('%H:%M:%S'), break_in_ts.time()
 
         # Case 4: No swipes (shouldn't reach here due to early return)
-        return "", ""
+        return "", "", None
 
     def _time_in_range(self, time_series: pd.Series, start: pd.Timestamp.time, end: pd.Timestamp.time) -> pd.Series:
         """Check if times fall within range, handling midnight-spanning ranges
@@ -503,5 +524,7 @@ class AttendanceProcessor:
                     worksheet.set_column(col_num, col_num, 10)
                 elif col_name == 'Name':
                     worksheet.set_column(col_num, col_num, 20)
+                elif 'Status' in col_name:
+                    worksheet.set_column(col_num, col_num, 14)
                 else:
                     worksheet.set_column(col_num, col_num, 12)

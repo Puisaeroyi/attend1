@@ -10,7 +10,7 @@ from processor import AttendanceProcessor
 @pytest.fixture
 def config():
     """Load configuration from rule.yaml"""
-    return RuleConfig.load_from_yaml('/home/silver/project_clean/rule.yaml')
+    return RuleConfig.load_from_yaml('rule.yaml')
 
 
 @pytest.fixture
@@ -52,10 +52,10 @@ def test_scenario_1_normal_day_shift(processor):
     row = result.iloc[0]
 
     assert row['Shift'] == 'Morning'
-    assert row['First In'] == '05:55:00'
-    assert row['Break Out'] == '09:55:00'
-    assert row['Break In'] == '10:25:00'
-    assert row['Last Out'] == '14:05:00'
+    assert row['Check-in'] == '05:55:00'
+    assert row['Break Time Out'] == '09:55:00'
+    assert row['Break Time In'] == '10:25:00'
+    assert row['Check Out Record'] == '14:05:00'
     print("✅ Scenario 1 PASSED: Normal day shift")
 
 
@@ -98,10 +98,10 @@ def test_scenario_2_burst_with_breaks(processor):
     row = result.iloc[0]
 
     assert row['Shift'] == 'Morning'
-    assert row['First In'] == '05:55:00'
-    assert row['Break Out'] == '10:01:00'  # End of burst
-    assert row['Break In'] == '10:25:00'
-    assert row['Last Out'] == '14:05:00'
+    assert row['Check-in'] == '05:55:00'
+    assert row['Break Time Out'] == '10:01:00'  # End of burst
+    assert row['Break Time In'] == '10:25:00'
+    assert row['Check Out Record'] == '14:05:00'
     print("✅ Scenario 2 PASSED: Burst with breaks")
 
 
@@ -135,10 +135,10 @@ def test_scenario_3_late_break_after_midpoint(processor):
     row = result.iloc[0]
 
     assert row['Shift'] == 'Morning'
-    assert row['First In'] == '06:00:00'
-    assert row['Break Out'] == '10:20:00'  # Gap-based detection
-    assert row['Break In'] == '10:29:00'   # Gap-based detection
-    assert row['Last Out'] == '14:00:00'
+    assert row['Check-in'] == '06:00:00'
+    assert row['Break Time Out'] == '10:20:00'  # Gap-based detection
+    assert row['Break Time In'] == '10:29:00'   # Gap-based detection
+    assert row['Check Out Record'] == '14:00:00'
     print("✅ Scenario 3 PASSED: Late break after midpoint (gap-based)")
 
 
@@ -193,10 +193,10 @@ def test_scenario_4_night_shift_crossing_midnight(processor):
     assert row['Shift'] == 'Night'
     assert row['ID'] == 'TPL0002'  # Capone
     assert row['Name'] == 'Pham Tan Phat'
-    assert row['First In'] == '21:55:28'
-    assert row['Break Out'] == '02:00:35'  # Next calendar day
-    assert row['Break In'] == '02:44:51'   # Next calendar day
-    assert row['Last Out'] == '06:03:14'   # Next calendar day
+    assert row['Check-in'] == '21:55:28'
+    assert row['Break Time Out'] == '02:00:35'  # Next calendar day
+    assert row['Break Time In'] == '02:44:51'   # Next calendar day
+    assert row['Check Out Record'] == '06:03:14'   # Next calendar day
     print("✅ Scenario 4 PASSED: Night shift crossing midnight (single record)")
 
 
@@ -230,10 +230,10 @@ def test_scenario_5_single_swipe_before_midpoint(processor):
     row = result.iloc[0]
 
     assert row['Shift'] == 'Morning'
-    assert row['First In'] == '06:00:00'
-    assert row['Break Out'] == '10:08:00'
-    assert row['Break In'] == ''  # Blank
-    assert row['Last Out'] == '14:00:00'
+    assert row['Check-in'] == '06:00:00'
+    assert row['Break Time Out'] == '10:08:00'
+    assert row['Break Time In'] == ''  # Blank
+    assert row['Check Out Record'] == '14:00:00'
     print("✅ Scenario 5 PASSED: Single swipe before midpoint")
 
 
@@ -267,10 +267,10 @@ def test_scenario_6_no_break_taken(processor):
     row = result.iloc[0]
 
     assert row['Shift'] == 'Morning'
-    assert row['First In'] == '06:00:00'
-    assert row['Break Out'] == ''  # Blank
-    assert row['Break In'] == ''   # Blank
-    assert row['Last Out'] == '14:00:00'
+    assert row['Check-in'] == '06:00:00'
+    assert row['Break Time Out'] == ''  # Blank
+    assert row['Break Time In'] == ''   # Blank
+    assert row['Check Out Record'] == '14:00:00'
     print("✅ Scenario 6 PASSED: No break taken")
 
 
@@ -307,7 +307,7 @@ def test_edge_case_overlapping_windows(processor):
     result = processor._extract_attendance_events(df)
     assert len(result) == 1
     assert result.iloc[0]['Shift'] == 'Afternoon'
-    assert result.iloc[0]['Last Out'] == '22:00:00'
+    assert result.iloc[0]['Check Out Record'] == '22:00:00'
     print("✅ Edge case PASSED: Overlapping windows handled correctly")
 
 
@@ -343,8 +343,8 @@ def test_edge_case_multiple_breaks(processor):
     row = result.iloc[0]
 
     # Should use FIRST gap
-    assert row['Break Out'] == '09:55:00'
-    assert row['Break In'] == '10:05:00'
+    assert row['Break Time Out'] == '09:55:00'
+    assert row['Break Time In'] == '10:05:00'
     print("✅ Edge case PASSED: Multiple breaks (first gap used)")
 
 
@@ -382,8 +382,8 @@ def test_edge_case_burst_spanning_break(processor):
     row = result.iloc[0]
 
     # Break Out should be burst_end (10:14), Break In blank (all before midpoint 10:15)
-    assert row['Break Out'] == '10:14:00'
-    assert row['Break In'] == ''
+    assert row['Break Time Out'] == '10:14:00'
+    assert row['Break Time In'] == ''
     print("✅ Edge case PASSED: Burst spanning break period")
 
 
