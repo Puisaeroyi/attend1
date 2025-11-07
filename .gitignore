@@ -5,11 +5,13 @@ __pycache__/
 *.so
 .Python
 venv/
+.venv/
 env/
 ENV/
 *.egg-info/
 dist/
 build/
+packaging_env/
 
 # Testing
 .pytest_cache/
@@ -24,6 +26,17 @@ htmlcov/
 *.swo
 *~
 
+# Build artifacts
+*.tar.gz
+*.zip
+*.exe
+*.app
+
+# Temporary files
+repomix-output.xml
+*.tmp
+*.bak
+
 # Project specific
 *.xlsx
 !tests/fixtures/*.xlsx
@@ -34,4 +47,3 @@ processed*.xlsx
 # OS
 .DS_Store
 Thumbs.db
-*.venv
