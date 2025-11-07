@@ -231,12 +231,12 @@ output_columns:
   - Name                    # Full name
   - Shift                   # A/B/C or Morning/Afternoon/Night
   - Check-in                # First entry (formerly First In)
-  - Check-in Status         # "On Time" or "Late"
   - Break Time Out          # Break start (formerly Break Out)
   - Break Time In           # Break end (formerly Break In)
-  - Break Time In Status    # "On Time" or "Late" or blank
   - Check Out Record        # Last exit (formerly Last Out)
-
+  - Check-in Status         # "On Time" or "Late"
+  - Break Time In Status    # "On Time" or "Late" or blank
+  
 status_determination:
   check_in_status:
     if_blank: ""
