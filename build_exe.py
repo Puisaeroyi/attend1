@@ -17,7 +17,7 @@ def check_dependencies():
     print("Checking dependencies...")
 
     required_modules = [
-        'tkinter', 'pandas', 'openpyxl', 'pyyaml', 'xlsxwriter'
+        'tkinter', 'pandas', 'openpyxl', 'yaml', 'xlsxwriter'
     ]
 
     missing_modules = []
