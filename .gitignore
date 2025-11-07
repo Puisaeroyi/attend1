@@ -34,3 +34,4 @@ processed*.xlsx
 # OS
 .DS_Store
 Thumbs.db
+*.venv
