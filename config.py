@@ -17,6 +17,7 @@ class ShiftConfig:
     check_out_end: time
     break_search_start: time
     break_search_end: time
+    break_out_checkpoint: time  # Target time for Break Time Out (window start)
     midpoint: time
     minimum_break_gap_minutes: int  # Minimum gap for break detection
     # v10.0 additions - late marking
@@ -166,6 +167,14 @@ class RuleConfig:
                 break_search_start = parse_time(break_out_range[0])
                 break_search_end = parse_time(break_in_range[1])
 
+                # Parse break_out_checkpoint (new in fix)
+                if 'checkpoint' in break_out_config:
+                    break_out_checkpoint = parse_time(break_out_config['checkpoint'])
+                else:
+                    # Fallback: use window start time
+                    window_start = break_info['window'].split('-')[0]
+                    break_out_checkpoint = parse_time(window_start)
+
                 break_end_time = parse_time(break_in_config['break_end_time'])
                 break_in_on_time_cutoff = parse_time(break_in_config['on_time_cutoff'])
                 break_in_late_threshold = parse_time(break_in_config['late_threshold'])
@@ -174,6 +183,10 @@ class RuleConfig:
                 break_range = break_info['search_range'].split('-')
                 break_search_start = parse_time(break_range[0])
                 break_search_end = parse_time(break_range[1])
+
+                # Default break_out_checkpoint: use window start time
+                window_start = break_info['window'].split('-')[0]
+                break_out_checkpoint = parse_time(window_start)
 
                 # Default: break window end time + 5-minute grace period
                 break_window_end_str = break_info['window'].split('-')[1]
@@ -199,6 +212,7 @@ class RuleConfig:
                 check_out_end=check_out_end,
                 break_search_start=break_search_start,
                 break_search_end=break_search_end,
+                break_out_checkpoint=break_out_checkpoint,
                 midpoint=midpoint,
                 minimum_break_gap_minutes=minimum_break_gap,
                 shift_start=shift_start,

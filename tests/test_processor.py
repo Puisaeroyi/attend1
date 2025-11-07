@@ -251,10 +251,11 @@ def test_detect_breaks_multiple_swipes(processor, config):
 
     break_out, break_in, _ = processor._detect_breaks(df, shift_a)
 
-    # With enhanced cutoff proximity logic:
+    # With independent selection (v10.0):
     # Three qualifying gaps: 09:50-09:55 (5min), 09:55-10:25 (30min), 10:25-10:30 (5min)
-    # The algorithm chooses 10:25-10:30 because Break In 10:30 is closest to cutoff 10:34:59
-    assert break_out == "10:25:00", f"Expected Break Time Out: 10:25:00, Got: {break_out}"
+    # Break Time Out: 09:55 is closest to checkpoint 10:00:00 (300 sec vs 1500 sec)
+    # Break Time In: 10:30 is closest to cutoff 10:34:59 (299 sec vs 599 sec)
+    assert break_out == "09:55:00", f"Expected Break Time Out: 09:55:00, Got: {break_out}"
     assert break_in == "10:30:00", f"Expected Break Time In: 10:30:00, Got: {break_in}"
 
 
@@ -412,10 +413,11 @@ def test_detect_breaks_cutoff_priority_selection_multiple_gaps(processor, config
     # Test the break detection
     break_out, break_in, break_in_time = processor._detect_breaks(df, shift_c)
 
-    # Verify the algorithm chose the gap closest to cutoff
-    # Gap between 02:35:00 and 02:49:00 has Break Time In (02:49:00) closest to 02:49:59 cutoff (59 seconds)
-    assert break_out == "02:35:00", f"Expected Break Time Out: 02:35:00, Got: {break_out}"
+    # Verify independent selection (v10.0):
+    # Break Time Out: 02:10 closest to checkpoint 02:00:00 (600 sec vs 1800/2100/2940 sec)
+    # Break Time In: 02:49 closest to cutoff 02:49:59 (59 sec vs 899/2399/4201 sec)
+    assert break_out == "02:10:00", f"Expected Break Time Out: 02:10:00, Got: {break_out}"
     assert break_in == "02:49:00", f"Expected Break Time In: 02:49:00, Got: {break_in}"
 
     print(f"✅ Multiple gaps test passed: Break Time Out = {break_out}, Break Time In = {break_in}")
-    print(f"✅ Correctly selected gap with Break Time In closest to cutoff")
+    print(f"✅ Correctly selected independent Break Out (closest to checkpoint) and Break In (closest to cutoff)")

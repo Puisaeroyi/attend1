@@ -399,11 +399,35 @@ class AttendanceProcessor:
             qualifying_gaps = break_swipes[break_swipes['gap_minutes'] >= min_gap]
 
             if len(qualifying_gaps) > 0:
-                # Enhanced logic: Choose gap with Break Time In closest to cutoff
-                cutoff_time = shift_cfg.break_in_on_time_cutoff
+                # Enhanced logic: Independent gap selection
+                # Break Time Out: closest to checkpoint (window start)
+                # Break Time In: closest to cutoff (grace period end)
+                checkpoint = shift_cfg.break_out_checkpoint
+                cutoff = shift_cfg.break_in_on_time_cutoff
 
-                # Calculate distance from cutoff for each qualifying gap
-                best_gap = None
+                def time_to_seconds(t: object) -> int:
+                    """Convert time to seconds for distance calculation"""
+                    return t.hour * 3600 + t.minute * 60 + t.second
+
+                # Find Break Time Out: gap with Break Time Out closest to checkpoint
+                best_out_gap = None
+                min_distance_to_checkpoint = float('inf')
+
+                for gap_idx in qualifying_gaps.index:
+                    break_out_ts = break_swipes.loc[gap_idx, 'burst_end']
+                    break_out_time = break_out_ts.time()
+
+                    # Calculate distance from checkpoint (in seconds)
+                    checkpoint_sec = time_to_seconds(checkpoint)
+                    break_out_sec = time_to_seconds(break_out_time)
+                    distance = abs(break_out_sec - checkpoint_sec)
+
+                    if distance < min_distance_to_checkpoint:
+                        min_distance_to_checkpoint = distance
+                        best_out_gap = gap_idx
+
+                # Find Break Time In: gap with Break Time In closest to cutoff
+                best_in_gap = None
                 min_distance_to_cutoff = float('inf')
 
                 for gap_idx in qualifying_gaps.index:
@@ -411,21 +435,18 @@ class AttendanceProcessor:
                     break_in_time = break_in_ts.time()
 
                     # Calculate distance from cutoff (in seconds)
-                    if break_in_time <= cutoff_time:
-                        distance = (cutoff_time.hour * 3600 + cutoff_time.minute * 60 + cutoff_time.second) - \
-                                 (break_in_time.hour * 3600 + break_in_time.minute * 60 + break_in_time.second)
-                    else:
-                        distance = (break_in_time.hour * 3600 + break_in_time.minute * 60 + break_in_time.second) - \
-                                 (cutoff_time.hour * 3600 + cutoff_time.minute * 60 + cutoff_time.second)
+                    cutoff_sec = time_to_seconds(cutoff)
+                    break_in_sec = time_to_seconds(break_in_time)
+                    distance = abs(break_in_sec - cutoff_sec)
 
-                    # Choose the gap with minimum distance to cutoff
                     if distance < min_distance_to_cutoff:
                         min_distance_to_cutoff = distance
-                        best_gap = gap_idx
+                        best_in_gap = gap_idx
 
-                if best_gap is not None:
-                    break_out_ts = break_swipes.loc[best_gap, 'burst_end']
-                    break_in_ts = break_swipes.loc[best_gap + 1, 'burst_start']
+                # Return independently selected Break Time Out and Break Time In
+                if best_out_gap is not None and best_in_gap is not None:
+                    break_out_ts = break_swipes.loc[best_out_gap, 'burst_end']
+                    break_in_ts = break_swipes.loc[best_in_gap + 1, 'burst_start']
 
                     return (
                         break_out_ts.strftime('%H:%M:%S'),

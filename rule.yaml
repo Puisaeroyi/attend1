@@ -138,6 +138,7 @@ break_detection:
       window: "10:00-10:30"
       break_out:
         search_range: "09:50-10:35"
+        checkpoint: "10:00:00"           # Break Time Out should be closest to this time
       break_in:
         search_range: "09:50-10:35"
         break_end_time: "10:30:00"
@@ -150,6 +151,7 @@ break_detection:
       window: "18:00-18:30"
       break_out:
         search_range: "17:50-18:35"
+        checkpoint: "18:00:00"           # Break Time Out should be closest to this time
       break_in:
         search_range: "17:50-18:35"
         break_end_time: "18:30:00"
@@ -162,6 +164,7 @@ break_detection:
       window: "02:00-02:45"
       break_out:
         search_range: "01:50-02:50"      # On shift_date + 1
+        checkpoint: "02:00:00"           # Break Time Out should be closest to this time
       break_in:
         search_range: "01:50-02:50"      # Extended to 02:50 for grace period
         break_end_time: "02:45:00"

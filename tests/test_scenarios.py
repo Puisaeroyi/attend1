@@ -342,10 +342,12 @@ def test_edge_case_multiple_breaks(processor):
     assert len(result) == 1
     row = result.iloc[0]
 
-    # Should use gap closest to cutoff (10:15 -> 10:25)
-    assert row['Break Time Out'] == '10:15:00'
+    # With independent selection (v10.0):
+    # Break Time Out: 09:55 closest to checkpoint 10:00:00 (300 sec, same as 10:05 but first)
+    # Break Time In: 10:25 closest to cutoff 10:34:59 (599 sec)
+    assert row['Break Time Out'] == '09:55:00'
     assert row['Break Time In'] == '10:25:00'
-    print("✅ Edge case PASSED: Multiple breaks (gap closest to cutoff used)")
+    print("✅ Edge case PASSED: Multiple breaks (independent selection used)")
 
 
 def test_edge_case_burst_spanning_break(processor):
