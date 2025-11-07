@@ -230,7 +230,7 @@ def test_detect_breaks_no_swipes(processor, config):
 
 def test_detect_breaks_multiple_swipes(processor, config):
     """Test break detection with multiple swipes each side of midpoint"""
-    shift_a = config.shifts['A']  # Midpoint: 10:15
+    shift_a = config.shifts['A']  # Midpoint: 10:15, cutoff: 10:34:59
 
     df = pd.DataFrame({
         'burst_start': [
@@ -251,11 +251,11 @@ def test_detect_breaks_multiple_swipes(processor, config):
 
     break_out, break_in, _ = processor._detect_breaks(df, shift_a)
 
-    # Gap detection takes priority - first qualifying gap is 09:50 to 09:55 (5 minutes)
-    assert break_out == "09:50:00"
-
-    # Break In is the swipe after the first gap
-    assert break_in == "09:55:00"
+    # With enhanced cutoff proximity logic:
+    # Three qualifying gaps: 09:50-09:55 (5min), 09:55-10:25 (30min), 10:25-10:30 (5min)
+    # The algorithm chooses 10:25-10:30 because Break In 10:30 is closest to cutoff 10:34:59
+    assert break_out == "10:25:00", f"Expected Break Time Out: 10:25:00, Got: {break_out}"
+    assert break_in == "10:30:00", f"Expected Break Time In: 10:30:00, Got: {break_in}"
 
 
 def test_time_in_range_normal(processor):
@@ -291,3 +291,131 @@ def test_time_in_range_midnight_spanning(processor):
 
     expected = [False, True, True, True, True, False]
     assert list(result) == expected
+
+
+def test_detect_breaks_cutoff_priority_selection(processor, config):
+    """
+    Test break detection with cutoff priority selection.
+
+    This test reproduces the specific scenario from rows 421-424 where:
+    - Shift C has break_end_time: 02:45:00 and break_in_on_time_cutoff: 02:49:59
+    - Input timestamps: 02:13:01, 02:39:29, 02:39:33, 04:59:54
+    - Two gaps available:
+        1. Gap between 02:13:01 and 02:39:29 (26 min 28 sec) - QUALIFIES (>= 5 min)
+        2. Gap between 02:39:29 and 02:39:33 (4 sec) - TOO SMALL (< 5 min)
+    - The algorithm should choose gap #1 because gap #2 doesn't meet minimum requirements
+    - Expected: Break Time Out = 02:13:01, Break Time In = 02:39:29
+    """
+    shift_c = config.shifts['C']  # Night shift with cutoff 02:49:59
+
+    # Create test data matching the scenario
+    df = pd.DataFrame({
+        'burst_start': [
+            datetime(2025, 11, 4, 2, 13, 1),   # First swipe
+            datetime(2025, 11, 4, 2, 39, 29),  # Second swipe
+            datetime(2025, 11, 4, 2, 39, 33),  # Third swipe
+            datetime(2025, 11, 4, 4, 59, 54)   # Fourth swipe
+        ],
+        'burst_end': [
+            datetime(2025, 11, 4, 2, 13, 1),   # First swipe
+            datetime(2025, 11, 4, 2, 39, 29),  # Second swipe
+            datetime(2025, 11, 4, 2, 39, 33),  # Third swipe
+            datetime(2025, 11, 4, 4, 59, 54)   # Fourth swipe
+        ]
+    })
+    df['time_start'] = df['burst_start'].dt.time
+    df['time_end'] = df['burst_end'].dt.time
+
+    # Test the break detection
+    break_out, break_in, break_in_time = processor._detect_breaks(df, shift_c)
+
+    # Verify the algorithm chose the correct gap according to current rules
+    # Gap between 02:39:29 and 02:39:33 is only 4 seconds, which is < 5 minute minimum
+    # So the algorithm should choose the only qualifying gap: 02:13:01 to 02:39:29
+    assert break_out == "02:13:01", f"Expected Break Time Out: 02:13:01, Got: {break_out}"
+    assert break_in == "02:39:29", f"Expected Break Time In: 02:39:29, Got: {break_in}"
+
+    # Additional verification: ensure the break_in_time is correct
+    assert break_in_time == time(2, 39, 29), f"Expected break_in_time: 02:39:29, Got: {break_in_time}"
+
+    print(f"✅ Test passed: Break Time Out = {break_out}, Break Time In = {break_in}")
+    print(f"✅ Correctly selected qualifying gap (4-second gap doesn't meet 5-min requirement)")
+
+
+def test_detect_breaks_cutoff_priority_with_valid_small_gaps(processor, config):
+    """
+    Test break detection with scenario where small gaps should be considered.
+
+    This test shows what would happen if we had gaps that are closer to the cutoff
+    AND still meet minimum requirements.
+    """
+    shift_c = config.shifts['C']  # Night shift with cutoff 02:49:59
+
+    # Create test data with valid gaps where closer one should be preferred
+    df = pd.DataFrame({
+        'burst_start': [
+            datetime(2025, 11, 4, 1, 30, 0),   # Early swipe
+            datetime(2025, 11, 4, 2, 10, 0),   # Creates 40-min gap
+            datetime(2025, 11, 4, 2, 49, 0),   # Close to cutoff - creates 39-min gap
+            datetime(2025, 11, 4, 4, 0, 0)     # Final swipe
+        ],
+        'burst_end': [
+            datetime(2025, 11, 4, 1, 30, 0),
+            datetime(2025, 11, 4, 2, 10, 0),
+            datetime(2025, 11, 4, 2, 49, 0),
+            datetime(2025, 11, 4, 4, 0, 0)
+        ]
+    })
+    df['time_start'] = df['burst_start'].dt.time
+    df['time_end'] = df['burst_end'].dt.time
+
+    # Test the break detection
+    break_out, break_in, break_in_time = processor._detect_breaks(df, shift_c)
+
+    # Both gaps qualify (> 5 min), but second gap should be chosen because
+    # Break Time In (02:49:00) is closer to cutoff (02:49:59)
+    assert break_out == "02:10:00", f"Expected Break Time Out: 02:10:00, Got: {break_out}"
+    assert break_in == "02:49:00", f"Expected Break Time In: 02:49:00, Got: {break_in}"
+
+    print(f"✅ Valid gaps test passed: Break Time Out = {break_out}, Break Time In = {break_in}")
+    print(f"✅ Correctly selected gap with Break Time In closest to cutoff (02:49:00 vs 02:49:59)")
+
+
+def test_detect_breaks_cutoff_priority_selection_multiple_gaps(processor, config):
+    """
+    Test break detection with multiple gaps where algorithm should prioritize cutoff proximity.
+
+    This test verifies the enhanced logic works with more complex scenarios.
+    """
+    shift_c = config.shifts['C']  # Night shift with cutoff 02:49:59
+
+    # Create test data with multiple qualifying gaps
+    df = pd.DataFrame({
+        'burst_start': [
+            datetime(2025, 11, 4, 1, 30, 0),   # Early swipe
+            datetime(2025, 11, 4, 2, 10, 0),   # Before cutoff gap
+            datetime(2025, 11, 4, 2, 35, 0),   # Closer to cutoff
+            datetime(2025, 11, 4, 2, 49, 0),   # Very close to cutoff (9 sec away)
+            datetime(2025, 11, 4, 4, 0, 0)     # After cutoff
+        ],
+        'burst_end': [
+            datetime(2025, 11, 4, 1, 30, 0),
+            datetime(2025, 11, 4, 2, 10, 0),
+            datetime(2025, 11, 4, 2, 35, 0),
+            datetime(2025, 11, 4, 2, 49, 0),
+            datetime(2025, 11, 4, 4, 0, 0)
+        ]
+    })
+    df['time_start'] = df['burst_start'].dt.time
+    df['time_end'] = df['burst_end'].dt.time
+
+    # Test the break detection
+    break_out, break_in, break_in_time = processor._detect_breaks(df, shift_c)
+
+    # Verify the algorithm chose the gap closest to cutoff
+    # Gap between 02:35:00 and 02:49:00 has Break Time In (02:49:00) closest to 02:49:59 cutoff (59 seconds)
+    assert break_out == "02:35:00", f"Expected Break Time Out: 02:35:00, Got: {break_out}"
+    assert break_in == "02:49:00", f"Expected Break Time In: 02:49:00, Got: {break_in}"
+
+    print(f"✅ Multiple gaps test passed: Break Time Out = {break_out}, Break Time In = {break_in}")
+    print(f"✅ Correctly selected gap with Break Time In closest to cutoff")

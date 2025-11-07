@@ -312,14 +312,14 @@ def test_edge_case_overlapping_windows(processor):
 
 
 def test_edge_case_multiple_breaks(processor):
-    """Edge case: Multiple gaps (should use first gap only)
+    """Edge case: Multiple gaps (should use gap closest to cutoff)
 
     Input: 06:00, 09:55, 10:05, 10:15, 10:25, 14:00
     Gaps:
-    - 09:55 to 10:05 = 10 minutes (first qualifying gap)
-    - 10:15 to 10:25 = 10 minutes (second gap)
+    - 09:55 to 10:05 = 10 minutes (first qualifying gap) - Break In 10:05 is 1794 sec from cutoff 10:34:59
+    - 10:15 to 10:25 = 10 minutes (second gap) - Break In 10:25 is 599 sec from cutoff 10:34:59
 
-    Expected: Use first gap (09:55 -> 10:05)
+    Expected: Use second gap (10:15 -> 10:25) because Break Time In is closer to cutoff
     """
     df = pd.DataFrame({
         'ID': ['1'] * 6,
@@ -342,10 +342,10 @@ def test_edge_case_multiple_breaks(processor):
     assert len(result) == 1
     row = result.iloc[0]
 
-    # Should use FIRST gap
-    assert row['Break Time Out'] == '09:55:00'
-    assert row['Break Time In'] == '10:05:00'
-    print("✅ Edge case PASSED: Multiple breaks (first gap used)")
+    # Should use gap closest to cutoff (10:15 -> 10:25)
+    assert row['Break Time Out'] == '10:15:00'
+    assert row['Break Time In'] == '10:25:00'
+    print("✅ Edge case PASSED: Multiple breaks (gap closest to cutoff used)")
 
 
 def test_edge_case_burst_spanning_break(processor):
