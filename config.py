@@ -38,8 +38,23 @@ class RuleConfig:
     status_filter: str
 
     @classmethod
-    def load_from_yaml(cls, path: str) -> 'RuleConfig':
-        """Parse rule.yaml into config objects"""
+    def load_from_yaml(cls, path: str, use_cache: bool = True) -> 'RuleConfig':
+        """Parse rule.yaml into config objects with optional caching
+
+        Args:
+            path: Path to rule.yaml file
+            use_cache: If True, return cached config if available (default: True)
+
+        Returns:
+            RuleConfig object
+        """
+        # Check cache first
+        if use_cache:
+            from performance import get_cached_config
+            cached = get_cached_config(path)
+            if cached:
+                return cached
+
         with open(path, 'r') as f:
             data = yaml.safe_load(f)
 
@@ -104,12 +119,19 @@ class RuleConfig:
         # Status filter
         status_filter = data['dataset_requirements']['input_logs']['status_filter'].split(' ')[0]
 
-        return cls(
+        config = cls(
             burst_threshold_minutes=burst_minutes,
             valid_users=valid_users,
             shifts=shifts,
             status_filter=status_filter
         )
+
+        # Cache for future use
+        if use_cache:
+            from performance import cache_config
+            cache_config(path, config)
+
+        return config
 
 
 def parse_time(s: str) -> time:

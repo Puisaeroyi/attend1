@@ -79,12 +79,13 @@ def validate_column_count(input_path: str) -> None:
             )
 
 
-def convert_csv_to_xlsx(input_path: str, output_path: str) -> int:
-    """Convert CSV to XLSX with column extraction.
+def convert_csv_to_xlsx(input_path: str, output_path: str, chunk_size: int = 5000) -> int:
+    """Convert CSV to XLSX with column extraction and chunking (optimized)
 
     Args:
         input_path: Path to input CSV file
         output_path: Path to output XLSX file
+        chunk_size: Rows per chunk for large files (default 5000)
 
     Returns:
         Number of rows processed
@@ -99,13 +100,36 @@ def convert_csv_to_xlsx(input_path: str, output_path: str) -> int:
     # Validate column count before processing
     validate_column_count(input_path)
 
-    # Read CSV with specific columns
-    df = pd.read_csv(input_path, usecols=COLUMN_INDICES)
+    # OPTIMIZATION: Check file size and use chunking for large files
+    csv_file_size = Path(input_path).stat().st_size
 
-    # Rename columns
-    df.columns = COLUMN_NAMES
+    if csv_file_size > 5 * 1024 * 1024:  # 5MB threshold
+        # Use chunked reading for large files
+        chunks = []
+        for chunk in pd.read_csv(input_path, usecols=COLUMN_INDICES, chunksize=chunk_size):
+            chunk.columns = COLUMN_NAMES
+            chunks.append(chunk)
+        df = pd.concat(chunks, ignore_index=True)
+    else:
+        # Small file: read all at once
+        df = pd.read_csv(input_path, usecols=COLUMN_INDICES)
+        df.columns = COLUMN_NAMES
 
-    # Write to XLSX
-    df.to_excel(output_path, index=False, engine='openpyxl')
+    # OPTIMIZATION: Use xlsxwriter for faster write
+    with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
+        df.to_excel(writer, sheet_name='Data', index=False)
+
+        # Add header formatting
+        workbook = writer.book
+        worksheet = writer.sheets['Data']
+        header_format = workbook.add_format({
+            'bold': True,
+            'bg_color': '#4472C4',
+            'font_color': 'white'
+        })
+
+        for col_num, col_name in enumerate(df.columns):
+            worksheet.write(0, col_num, col_name, header_format)
+            worksheet.set_column(col_num, col_num, 15)
 
     return len(df)
